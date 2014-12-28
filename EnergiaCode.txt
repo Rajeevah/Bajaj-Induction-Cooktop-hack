@@ -1,0 +1,423 @@
+/*
+  WiFi Web Server LED Blink
+ 
+ A simple web server that lets you blink an LED via the web.
+ This sketch will print the IP address of your WiFi (once connected)
+ to the Serial monitor. From there, you can open that address in a web browser
+ to turn on and off the LED on pin 9.
+ 
+ If the IP address of your WiFi is yourAddress:
+ http://yourAddress/H turns the LED on
+ http://yourAddress/L turns it off
+ 
+ This example is written for a network using WPA encryption. For
+ WEP or WPA, change the Wifi.begin() call accordingly.
+ 
+ Circuit:
+ * CC3200 WiFi LaunchPad or CC3100 WiFi BoosterPack
+ with TM4C or MSP430 LaunchPad
+ 
+ created 25 Nov 2012
+ by Tom Igoe
+ modified 6 July 2014
+ by Noah Luskey
+ */
+#ifndef __CC3200R1M1RGC__
+// Do not include SPI for CC3200 LaunchPad
+#include <SPI.h>
+#endif
+#include <WiFi.h>
+
+// your network name also called SSID
+char ssid[] = "Your Wifi name";
+// your network password
+char password[] = "Your wifi password";
+// your network key Index number (needed only for WEP)
+int keyIndex = 0;
+
+WiFiServer server(80);
+char debugbuf[200];
+#define POWERPIN 19
+#define PLUSPIN  18
+#define MINUSPIN 17
+#define FNPIN  15
+#define TIMERPIN 14
+
+
+void initPins()
+{
+  digitalWrite(POWERPIN, LOW);
+  digitalWrite(FNPIN, LOW);
+  digitalWrite(PLUSPIN, LOW);
+  digitalWrite(MINUSPIN, LOW);
+  digitalWrite(TIMERPIN, LOW);
+}
+
+void setup() {
+  Serial.begin(115200);      // initialize serial communication
+  pinMode(POWERPIN, OUTPUT);
+  pinMode(FNPIN, OUTPUT);
+  pinMode(PLUSPIN, OUTPUT);
+  pinMode(MINUSPIN, OUTPUT);
+  pinMode(TIMERPIN, OUTPUT);
+  initPins();
+  // attempt to connect to Wifi network:
+  Serial.print("Attempting to connect to Network named: ");
+  // print the network name (SSID);
+  Serial.println(ssid); 
+  // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+  WiFi.begin(ssid, password);
+  while ( WiFi.status() != WL_CONNECTED) {
+    // print dots while we wait to connect
+    Serial.print(".");
+    delay(300);
+  }
+
+  Serial.println("\nYou're connected to the network");
+  Serial.println("Waiting for an ip address");
+
+  while (WiFi.localIP() == INADDR_NONE) {
+    // print dots while we wait for an ip addresss
+    Serial.print(".");
+    delay(300);
+  }
+
+  Serial.println("\nIP Address obtained");
+
+  // you're connected now, so print out the status  
+  printWifiStatus();
+
+  Serial.println("Starting webserver on port 80");
+  server.begin();                           // start the web server on port 80
+  Serial.println("Webserver started!");
+}
+
+#define ON 1
+#define OFF 0
+static uint8_t tme=4,pwr=3,oldtme=4,oldPwr=3,state=OFF;
+
+void gotoCurryMode()
+{
+
+  //4 times fn key => curry mode
+  digitalWrite(FNPIN, HIGH);
+  delay(300);
+  digitalWrite(FNPIN, LOW);
+  delay(300);
+  digitalWrite(FNPIN, HIGH);
+  delay(300);
+  digitalWrite(FNPIN, LOW);
+  delay(300);
+  digitalWrite(FNPIN, HIGH);
+  delay(300);
+  digitalWrite(FNPIN, LOW);
+  delay(300);
+  digitalWrite(FNPIN, HIGH);
+  delay(300);
+  digitalWrite(FNPIN, LOW);
+  delay(300);
+  //set timer to 30 min default
+  digitalWrite(TIMERPIN, HIGH);
+  delay(300);
+  digitalWrite(TIMERPIN, LOW);
+  delay(300);
+
+
+}
+char timearray[]={
+  5,10,15,20,30,40,50,60,75,90};
+int pwrArray[]={
+  100,400,800,1200,1400};
+void configureMode()
+{
+  int i=0;
+  //configure time 
+  digitalWrite(TIMERPIN, HIGH);
+  delay(300);
+  digitalWrite(TIMERPIN, LOW);
+  delay(300);
+  Serial.println("TIMER"); 
+
+  sprintf(debugbuf,"oldtime = %d new time = %d",oldtme,tme);
+  Serial.println(debugbuf);
+  if(tme>oldtme)
+  {
+    for(;tme-oldtme!=0;)
+    {
+      digitalWrite(PLUSPIN, HIGH);
+      delay(300);
+      digitalWrite(PLUSPIN, LOW);
+      delay(300);
+      oldtme++;
+      Serial.println("Time plus");
+    }
+  }
+  else if (tme<oldtme)
+  {
+    for(;oldtme-tme!=0;)
+    {
+      digitalWrite(MINUSPIN, HIGH);
+      delay(300);
+      digitalWrite(MINUSPIN, LOW);
+      delay(300);
+      oldtme--;
+      Serial.println("Time minus");
+    }
+  }
+  delay(300);
+
+
+  Serial.println("POWER");
+  sprintf(debugbuf,"oldpwr = %d new pwr = %d",oldPwr,pwr);
+  Serial.println(debugbuf);
+  if(pwr>oldPwr)
+  {
+
+    for(;pwr-oldPwr!=0;)
+    {
+      digitalWrite(PLUSPIN, HIGH);
+      delay(300);
+      digitalWrite(PLUSPIN, LOW);
+      delay(300);
+      oldPwr++;
+      Serial.println("Power Plus");
+    }
+  }
+  else if (pwr<oldPwr)
+  {
+    for(;oldPwr-pwr!=0;)
+    {
+      digitalWrite(MINUSPIN, HIGH);
+      delay(300);
+      digitalWrite(MINUSPIN, LOW);
+      delay(300);
+      oldPwr--;
+      Serial.println("Power minus");
+    }
+  }
+  delay(300);
+
+  oldtme = tme;
+  oldPwr = pwr;
+
+
+}
+
+
+void stopCooking()
+{
+  digitalWrite(POWERPIN, HIGH);
+  delay(300);
+  digitalWrite(POWERPIN, LOW);
+  delay(300);
+}
+
+
+void loop() {
+  int i = 0;
+  char msgBuf[200]={
+    0      };
+  WiFiClient client = server.available();   // listen for incoming clients
+
+  if (client) {                             // if you get a client,
+    Serial.println("new client");           // print a message out the serial port
+    char buffer[200] = {
+      0            };                 // make a buffer to hold incoming data
+    while (client.connected()) {            // loop while the client's connected
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
+
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (strlen(buffer) == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println();
+
+            // the content of the HTTP response follows the header:
+            client.println("<html><head><title>Inducion Stove control page</title></head><body align=center>");
+            client.println("<h1 align=center><font color=\"red\">Welcome to Induction stove control page</font></h1>");
+            if(state == ON)
+            {
+              sprintf(msgBuf,"Induction stove started with %d watt and will be on for %d minutes", pwrArray[pwr],timearray[tme]);
+              client.print(msgBuf);
+              client.println(" <button onclick=\"location.href='/STOPCOOKING'\">STOP COOKING</button><br>");
+            }
+            else if(state == OFF)
+            {
+
+              client.print("Select TIMER<br>");
+              client.print(" <button onclick=\"location.href='/5m'\">5 MINS</button>");
+              client.print(" <button onclick=\"location.href='/10m'\">10 MINS</button>");
+              client.print(" <button onclick=\"location.href='/15m'\">15 MINS</button>");
+              client.print(" <button onclick=\"location.href='/20m'\">20 MINS</button>");
+              client.print(" <button onclick=\"location.href='/30m'\">30 MINS</button>");
+              client.print(" <button onclick=\"location.href='/40m'\">40 MINS</button>");
+              client.print(" <button onclick=\"location.href='/50m'\">50 MINS</button>");
+              client.print(" <button onclick=\"location.href='/60m'\">60 MINS</button>");
+              client.print(" <button onclick=\"location.href='/75m'\">75 MINS</button>");
+              client.print(" <button onclick=\"location.href='/90m'\">90 MINS</button><br><br>");
+              client.print("Select POWER<br>");
+              client.print(" <button onclick=\"location.href='/100W'\">100 W</button>");
+              client.print(" <button onclick=\"location.href='/400W'\">400 W</button>");
+              client.print(" <button onclick=\"location.href='/800W'\">800 W</button>");
+              client.print(" <button onclick=\"location.href='/1200W'\">1200 W</button>");
+              client.print(" <button onclick=\"location.href='/1400W'\">1400 W</button><br><br>");
+
+
+              client.println(" <button onclick=\"location.href='/STARTCOOKING'\">START COOKING</button><br>");
+            }
+
+
+            // The HTTP response ends with another blank line:
+            client.println();
+            // break out of the while loop:
+            break;
+          }
+          else {      // if you got a newline, then clear the buffer:
+            memset(buffer, 0, 150);
+            i = 0;
+          }
+        }
+        else if (c != '\r') {    // if you got anything else but a carriage return character,
+          buffer[i++] = c;      // add it to the end of the currentLine
+        }
+
+        //check for cooking state
+        if ((state==OFF) && (endsWith(buffer, "GET /STARTCOOKING")))
+        {
+          state = ON;
+          digitalWrite(POWERPIN, HIGH);
+          delay(300);
+          digitalWrite(POWERPIN, LOW);
+          gotoCurryMode();
+          delay(2000);
+          configureMode();
+        }
+        if ((state==ON) &&(endsWith(buffer, "GET /STOPCOOKING"))) 
+        {
+          state = OFF;
+          stopCooking();
+        }
+
+        if(state==OFF)
+        {
+          // CHECK FOR POWER CHANGE
+          if (endsWith(buffer, "GET /100W")) {
+            pwr = 0;
+          }
+          if (endsWith(buffer, "GET /400W")) {
+            pwr = 1;
+          }
+          if (endsWith(buffer, "GET /800W")) {
+            pwr = 2;
+          }
+          if (endsWith(buffer, "GET /1200W")) {
+            pwr = 3;
+          }
+          if (endsWith(buffer, "GET /1400W")) {
+            pwr = 4;
+          }
+
+
+          //check for time change
+          if (endsWith(buffer, "GET /5m")) {
+            tme = 0;
+          }
+
+          if (endsWith(buffer, "GET /10m")) {
+            tme = 1;
+          }
+
+          if (endsWith(buffer, "GET /15m")) {
+            tme = 2;
+          }
+
+          if (endsWith(buffer, "GET /20m")) {
+            tme = 3;
+          }
+
+          if (endsWith(buffer, "GET /30m")) {
+            tme = 4;
+          }
+          if (endsWith(buffer, "GET /40m")) {
+            tme = 5;
+          }
+          if (endsWith(buffer, "GET /50m")) {
+            tme = 6;
+          }
+          if (endsWith(buffer, "GET /60m")) {
+            tme = 7;
+          }
+          if (endsWith(buffer, "GET /75m")) {
+            tme = 8;
+          }
+          if (endsWith(buffer, "GET /90m")) {
+            tme = 9;
+          }
+
+
+        }
+
+
+      }
+    }
+
+    Serial.println(timearray[tme],DEC);
+    Serial.println(pwrArray[pwr],DEC);
+    Serial.println();
+    // close the connection:
+    client.stop();
+    Serial.println("client disonnected");
+  }
+}
+
+//
+//a way to check if one array ends with another array
+//
+boolean endsWith(char* inString, char* compString) {
+  int compLength = strlen(compString);
+  int strLength = strlen(inString);
+
+  //compare the last "compLength" values of the inString
+  int i;
+  for (i = 0; i < compLength; i++) {
+    char a = inString[(strLength - 1) - i];
+    char b = compString[(compLength - 1) - i];
+    if (a != b) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void printWifiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+  // print where to go in a browser:
+  Serial.print("To see this page in action, open a browser to http://");
+  Serial.println(ip);
+}
+
+
+
+
+
+
+
